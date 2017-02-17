@@ -1,0 +1,10 @@
+﻿{
+  "frameworks": {
+    "net46":{
+      "dependencies": {
+        "Microsoft.Azure.Storage.DataMovement": "0.5.0",
+        "WindowsAzure.Storage": "8.0.0"
+      }
+    }
+  }
+}
