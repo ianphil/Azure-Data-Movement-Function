@@ -1,9 +1,10 @@
-﻿using System.Net;
+using System.Net;
 using Microsoft.WindowsAzure.Storage;
 using Microsoft.WindowsAzure.Storage.Blob;
 using Microsoft.WindowsAzure.Storage.DataMovement;
 using System.Threading;
 using System.Threading.Tasks;
+using System.Configuration;
 
 public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, TraceWriter log)
 {
@@ -14,27 +15,30 @@ public static async Task<HttpResponseMessage> Run(HttpRequestMessage req, TraceW
         .FirstOrDefault(q => string.Compare(q.Key, "name", true) == 0)
         .Value;
 
-    if (name != null)
-    {
-        await BlobCopy(name, log);
-    }
+    var sourceClient = GetSourceCloudBlobClient();
+    var destinationClients = GetDestinationCloudBlobClients();
+
+    //Parallel.ForEach(destinationClients, desitnationclient => {BlobCopy(name, log, sourceClient, destinationClient)});
+
+    foreach(var destinationClient in destinationClients)
+        BlobCopy(name, log, sourceClient, destinationClient);
 
     return name == null
         ? req.CreateResponse(HttpStatusCode.BadRequest, "Please pass a name on the query string or in the request body")
         : req.CreateResponse(HttpStatusCode.OK, "Copy started");
 }
 
-private static async Task BlobCopy(string sourceBlobName, TraceWriter log)
+private static async Task BlobCopy(string sourceBlobName, TraceWriter log, CloudBlobClient sourceClient, CloudBlobClient destinationClient)
 {
     string destinationBlobName = sourceBlobName;
-    string sourceContainerName = "source";
-    string destinationContainerName = "destination";
+    string sourceContainerName = "threat";
+    string destinationContainerName = "threat";
 
     // Create the source CloudBlob instance
-    CloudBlob sourceBlob = await GetCloudBlobAsync("source", sourceContainerName, sourceBlobName, BlobType.PageBlob);
+    CloudBlob sourceBlob = await GetCloudBlobAsync(sourceContainerName, sourceBlobName, BlobType.PageBlob, sourceClient);
 
     // Create the destination CloudBlob instance
-    CloudBlob destinationBlob = await GetCloudBlobAsync("destination", destinationContainerName, destinationBlobName, BlobType.PageBlob);
+    CloudBlob destinationBlob = await GetCloudBlobAsync(destinationContainerName, destinationBlobName, BlobType.PageBlob, destinationClient);
 
     // Create CancellationTokenSource used to cancel the transfer
     CancellationTokenSource cancellationSource = new CancellationTokenSource();
@@ -49,26 +53,13 @@ private static async Task BlobCopy(string sourceBlobName, TraceWriter log)
     }
     catch (Exception e)
     {
+        log.Error(e.Message);
         log.Error("Transfer Error");
     }
 }
 
-public static async Task<CloudBlob> GetCloudBlobAsync(string location, string containerName, string blobName, BlobType blobType)
+public static async Task<CloudBlob> GetCloudBlobAsync(string containerName, string blobName, BlobType blobType, CloudBlobClient client)
 {
-    CloudBlobClient client;
-
-    switch (location)
-    {
-        case "source":
-            client = GetSourceCloudBlobClient();
-            break;
-        case "destination":
-            client = GetDestinationCloudBlobClient();
-            break;
-        default:
-            throw new ArgumentException(string.Format("Invalid client type {0}", location), "clientType");
-    }
-
     CloudBlobContainer container = client.GetContainerReference(containerName);
     await container.CreateIfNotExistsAsync();
 
@@ -97,23 +88,28 @@ private static CloudBlobClient GetSourceCloudBlobClient()
     return GetSourceStorageAccount().CreateCloudBlobClient();
 }
 
-private static CloudBlobClient GetDestinationCloudBlobClient()
-{
-    return GetDestinationStorageAccount().CreateCloudBlobClient();
-}
 
 private static CloudStorageAccount GetSourceStorageAccount()
 {
-    var key = "<key>";
-    var connectionString = $"DefaultEndpointsProtocol=https;AccountName=<storage_account>;AccountKey={key}";
+    var connectionString = ConfigurationManager.AppSettings["source_STORAGE"];
 
     return CloudStorageAccount.Parse(connectionString);
 }
 
-private static CloudStorageAccount GetDestinationStorageAccount()
+private static List<CloudBlobClient> GetDestinationCloudBlobClients()
 {
-    var key = "<key>";
-    var connectionString = $"DefaultEndpointsProtocol=https;AccountName=<stroage_account>;AccountKey={key}";
+    var destinationkeys = new List<string>{ConfigurationManager.AppSettings["destination1_STORAGE"], ConfigurationManager.AppSettings["destination2_STORAGE"]};
+    
+    var DestinationCloudStorageAccounts = new List<CloudStorageAccount>();
+    var DestinationCloudBlobClients = new List<CloudBlobClient>();
 
-    return CloudStorageAccount.Parse(connectionString);
+    foreach(var destination in destinationkeys)
+    {
+        var storageAccount = CloudStorageAccount.Parse(destination);
+        var cloubBlobClient = storageAccount.CreateCloudBlobClient();
+
+        DestinationCloudBlobClients.Add(cloubBlobClient);
+    }
+
+    return DestinationCloudBlobClients;
 }
